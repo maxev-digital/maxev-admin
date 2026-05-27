@@ -1,0 +1,957 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── AUTH ──────────────────────────────────────────────────────────────────────
+
+model AdminUser {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String?
+  passwordHash     String
+  role             AdminRole @default(MEMBER)
+  avatar           String?
+  resetToken       String?   @unique
+  resetTokenExpiry DateTime?
+  inviteToken      String?   @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastLoginAt      DateTime?
+  sessions         AdminSession[]
+
+  @@map("admin_users")
+}
+
+model AdminSession {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  user      AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("admin_sessions")
+}
+
+enum AdminRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// ── PROSPECT DEMO ACCESS ──────────────────────────────────────────────────────
+
+model ProspectAccount {
+  id           String    @id @default(cuid())
+  orgId        String    @default("default")
+  name         String
+  email        String    @unique
+  company      String?
+  passwordHash String
+  isActive     Boolean   @default(true)
+  loginCount   Int       @default(0)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions     ProspectSession[]
+  activities   ProspectActivity[]
+
+  @@map("prospect_accounts")
+}
+
+model ProspectSession {
+  id         String          @id @default(cuid())
+  prospectId String
+  token      String          @unique
+  ipAddress  String?
+  userAgent  String?
+  expiresAt  DateTime
+  createdAt  DateTime        @default(now())
+
+  prospect   ProspectAccount @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@map("prospect_sessions")
+}
+
+model ProspectActivity {
+  id         String          @id @default(cuid())
+  prospectId String
+  sessionId  String?
+  type       String
+  page       String
+  action     String?
+  metadata   Json?
+  createdAt  DateTime        @default(now())
+
+  prospect   ProspectAccount @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@map("prospect_activities")
+}
+
+// ── CLIENTS ───────────────────────────────────────────────────────────────────
+
+model Client {
+  id            String        @id @default(cuid())
+  orgId         String        @default("default")
+  businessName  String
+  contactName   String?
+  email         String?
+  phone         String?
+  website       String?
+  industry      String
+  city          String?
+  state         String?
+  packageTier   PackageTier   @default(STARTER)
+  status        ClientStatus  @default(ACTIVE)
+  mrr           Float         @default(0)
+  launchDate    DateTime?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  projects         Project[]
+  proposals        Proposal[]
+  invoices         Invoice[]
+  activities       ActivityLog[]
+  documents        ClientDocument[]
+  recurringBilling RecurringBilling?
+  emails           EmailMessage[]
+
+  @@map("clients")
+}
+
+enum ClientStatus {
+  ACTIVE
+  PAUSED
+  CHURNED
+  PROSPECT
+}
+
+enum PackageTier {
+  STARTER
+  GROWTH
+  PRO
+  ENTERPRISE
+  CUSTOM
+}
+
+model Contract {
+  id           String         @id @default(cuid())
+  orgId        String         @default("default")
+  clientId     String?
+  clientName   String
+  serviceName  String
+  startDate    DateTime
+  endDate      DateTime
+  monthlyValue Float
+  status       ContractStatus @default(DRAFT)
+  notes        String?
+  fileUrl      String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@map("contracts")
+}
+
+enum ContractStatus {
+  ACTIVE
+  EXPIRING_SOON
+  EXPIRED
+  DRAFT
+}
+
+model ClientPacket {
+  id          String   @id @default(cuid())
+  orgId       String   @default("default")
+  name        String
+  contents    String
+  status      String   @default("Active")
+  sentCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("client_packets")
+}
+
+model FinanceTemplate {
+  id          String   @id @default(cuid())
+  orgId       String   @default("default")
+  name        String
+  type        String   @default("Document")
+  description String?
+  content     String?
+  status      String   @default("Active")
+  usageCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("finance_templates")
+}
+
+// ── LEADS / PIPELINE ─────────────────────────────────────────────────────────
+
+model Lead {
+  id             String      @id @default(cuid())
+  orgId          String      @default("default")
+  businessName   String
+  contactName    String?
+  email          String?
+  phone          String?
+  website        String?
+  industry       String
+  city           String?
+  state          String?
+  source         String?
+  presenceScore  Int?
+  packageInterest PackageTier?
+  estimatedValue Float?
+  stage          PipelineStage @default(LEAD)
+  priority       LeadPriority  @default(WARM)
+  notes                  String?
+  demoDate               DateTime?
+  googleCalendarEventId  String?
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  activities      ActivityLog[]
+  outreachHistory OutreachHistory[]
+  emails          EmailMessage[]
+
+  @@map("leads")
+}
+
+enum PipelineStage {
+  LEAD
+  DEMO_SCHEDULED
+  PROPOSAL_SENT
+  CONTRACT_SIGNED
+  IN_DEV
+  REVIEW
+  LIVE
+  ON_RETAINER
+  DEAD
+}
+
+enum LeadPriority {
+  HOT
+  WARM
+  COLD
+}
+
+// ── PROJECTS ─────────────────────────────────────────────────────────────────
+
+model Project {
+  id          String        @id @default(cuid())
+  orgId       String        @default("default")
+  clientId    String
+  name        String
+  type        ProjectType
+  status      ProjectStatus @default(IN_PROGRESS)
+  startDate   DateTime?
+  launchDate  DateTime?
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  client      Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("projects")
+}
+
+enum ProjectType {
+  WEBSITE
+  FULL_STACK
+  SEO
+  SOCIAL_MEDIA
+  EMAIL_MARKETING
+  CRM_SETUP
+  CUSTOM
+}
+
+enum ProjectStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  REVIEW
+  LIVE
+  PAUSED
+}
+
+// ── PROPOSALS ─────────────────────────────────────────────────────────────────
+
+model Proposal {
+  id              String         @id @default(cuid())
+  orgId           String         @default("default")
+  clientId        String?
+  leadId          String?
+  proposalNumber  String         @unique
+  businessName    String
+  industry        String
+  packageTier     PackageTier
+  oneTimeTotal    Float          @default(0)
+  monthlyTotal    Float          @default(0)
+  lineItems       Json           @default("[]")
+  status          ProposalStatus @default(DRAFT)
+  signToken       String?        @unique
+  sentAt          DateTime?
+  viewedAt        DateTime?
+  signedAt        DateTime?
+  expiresAt       DateTime?
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  client          Client?        @relation(fields: [clientId], references: [id])
+  invoices        Invoice[]
+
+  @@map("proposals")
+}
+
+enum ProposalStatus {
+  DRAFT
+  SENT
+  VIEWED
+  SIGNED
+  DECLINED
+  EXPIRED
+}
+
+// ── INVOICES ──────────────────────────────────────────────────────────────────
+
+model Invoice {
+  id             String        @id @default(cuid())
+  orgId          String        @default("default")
+  clientId       String
+  proposalId     String?
+  invoiceNumber  String        @unique
+  type           InvoiceType
+  amount         Float
+  lineItems      Json          @default("[]")
+  status         InvoiceStatus @default(PENDING)
+  dueDate        DateTime?
+  paidAt         DateTime?
+  stripeLink     String?
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  client         Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  proposal       Proposal?     @relation(fields: [proposalId], references: [id])
+
+  @@map("invoices")
+}
+
+enum InvoiceType {
+  DEPOSIT
+  FINAL
+  RETAINER
+  CUSTOM
+}
+
+enum InvoiceStatus {
+  PENDING
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// ── RECURRING BILLING ─────────────────────────────────────────────────────────
+
+model RecurringBilling {
+  id             String         @id @default(cuid())
+  orgId          String         @default("default")
+  clientId       String         @unique
+  amount         Float
+  cycle          BillingCycle   @default(MONTHLY)
+  nextBillingAt  DateTime
+  isActive       Boolean        @default(true)
+  autoSend       Boolean        @default(false)
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  client         Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("recurring_billing")
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+// ── PROSPECTS ─────────────────────────────────────────────────────────────────
+
+model Prospect {
+  id              String          @id @default(cuid())
+  orgId           String          @default("default")
+  businessName    String
+  contactName     String?
+  email           String?
+  phone           String?
+  website         String?
+  industry        String
+  city            String?
+  state           String?
+  presenceScore   Int?
+  scoreBreakdown  Json?
+  outreachStatus  OutreachStatus  @default(COLD)
+  source          String?
+  lastContactAt   DateTime?
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  outreachHistory OutreachHistory[]
+
+  @@map("prospects")
+}
+
+enum OutreachStatus {
+  COLD
+  WARM
+  HOT
+  DEMO_BOOKED
+  PROPOSAL_SENT
+  CONVERTED
+  UNINTERESTED
+  DEAD
+}
+
+// ── OUTREACH ──────────────────────────────────────────────────────────────────
+
+model OutreachHistory {
+  id          String    @id @default(cuid())
+  orgId       String    @default("default")
+  prospectId  String?
+  leadId      String?
+  channel     String
+  templateId  String?
+  subject     String?
+  body        String?
+  status      String    @default("sent")
+  openedAt    DateTime?
+  clickedAt   DateTime?
+  repliedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  prospect    Prospect? @relation(fields: [prospectId], references: [id])
+  lead        Lead?     @relation(fields: [leadId], references: [id])
+
+  @@map("outreach_history")
+}
+
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  orgId       String   @default("default")
+  name        String
+  category    String
+  subject     String
+  bodyHtml    String
+  bodyText    String?
+  industry    String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("email_templates")
+}
+
+model Subscriber {
+  id            String          @id @default(cuid())
+  orgId         String          @default("default")
+  email         String          @unique
+  name          String?
+  businessName  String?
+  industry      String?
+  city          String?
+  listType      SubscriberList  @default(PROSPECT)
+  status        String          @default("active")
+  source        String?
+  tags          String          @default("")
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@map("subscribers")
+}
+
+enum SubscriberList {
+  PROSPECT
+  CLIENT
+  NEWSLETTER
+}
+
+// ── SHARED ────────────────────────────────────────────────────────────────────
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  orgId       String   @default("default")
+  clientId    String?
+  leadId      String?
+  type        String
+  description String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  client      Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("activity_log")
+}
+
+model ClientDocument {
+  id          String   @id @default(cuid())
+  orgId       String   @default("default")
+  clientId    String
+  name        String
+  type        String
+  url         String
+  size        Int?
+  createdAt   DateTime @default(now())
+
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("client_documents")
+}
+
+// ── INVENTORY ─────────────────────────────────────────────────────────────────
+
+model Supplier {
+  id           String          @id @default(cuid())
+  orgId        String          @default("default")
+  name         String
+  category     String?
+  contactName  String?
+  email        String?
+  phone        String?
+  address      String?
+  rating       Float           @default(0)
+  leadTimeDays Int             @default(0)
+  notes        String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  products     Product[]
+  orders       PurchaseOrder[]
+
+  @@map("suppliers")
+}
+
+model Product {
+  id          String              @id @default(cuid())
+  orgId       String              @default("default")
+  name        String
+  category    String
+  sku         String              @unique
+  inStock     Int                 @default(0)
+  minStock    Int                 @default(0)
+  unitCost    Float               @default(0)
+  unit        String              @default("unit")
+  trend       StockTrend          @default(STABLE)
+  supplierId  String?
+  notes       String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  supplier    Supplier?           @relation(fields: [supplierId], references: [id])
+  orderItems  PurchaseOrderItem[]
+
+  @@map("products")
+}
+
+model PurchaseOrder {
+  id           String              @id @default(cuid())
+  orgId        String              @default("default")
+  supplierId   String
+  orderNumber  String              @unique
+  status       PurchaseOrderStatus @default(PENDING)
+  orderDate    DateTime            @default(now())
+  expectedDate DateTime?
+  receivedDate DateTime?
+  notes        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  supplier     Supplier            @relation(fields: [supplierId], references: [id])
+  items        PurchaseOrderItem[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id        String        @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int
+  unitCost  Float
+  createdAt DateTime      @default(now())
+
+  order     PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product       @relation(fields: [productId], references: [id])
+
+  @@map("purchase_order_items")
+}
+
+enum StockTrend {
+  UP
+  DOWN
+  STABLE
+}
+
+enum PurchaseOrderStatus {
+  PENDING
+  ORDERED
+  RECEIVED
+  CANCELLED
+}
+
+// ── BOOKING ───────────────────────────────────────────────────────────────────
+
+model BookingService {
+  id           String        @id @default(cuid())
+  orgId        String        @default("default")
+  name         String
+  durationMin  Int           @default(60)
+  price        Float         @default(0)
+  color        String        @default("#3B7DD9")
+  description  String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  appointments Appointment[]
+
+  @@map("booking_services")
+}
+
+model Staff {
+  id           String        @id @default(cuid())
+  orgId        String        @default("default")
+  name         String
+  role         String?
+  color        String        @default("#3B7DD9")
+  email        String?
+  phone        String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  appointments Appointment[]
+
+  @@map("staff")
+}
+
+model Appointment {
+  id           String            @id @default(cuid())
+  orgId        String            @default("default")
+  patientName  String
+  patientEmail String?
+  patientPhone String?
+  serviceId    String?
+  staffId      String?
+  startTime    DateTime
+  durationMin  Int               @default(60)
+  status       AppointmentStatus @default(CONFIRMED)
+  notes                  String?
+  googleCalendarEventId  String?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  service      BookingService?   @relation(fields: [serviceId], references: [id])
+  staff        Staff?            @relation(fields: [staffId], references: [id])
+
+  @@map("appointments")
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  NO_SHOW
+  COMPLETED
+  OPEN
+}
+
+// ── HELPDESK ──────────────────────────────────────────────────────────────────
+
+model Ticket {
+  id          String         @id @default(cuid())
+  orgId       String         @default("default")
+  subject     String
+  fromName    String
+  fromEmail   String
+  body        String
+  status      TicketStatus   @default(OPEN)
+  priority    TicketPriority @default(MEDIUM)
+  category    String         @default("General")
+  assignee    String         @default("Unassigned")
+  resolvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@map("tickets")
+}
+
+enum TicketStatus {
+  OPEN
+  URGENT
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  URGENT
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model NewsletterBroadcast {
+  id             String   @id @default(cuid())
+  orgId          String   @default("default")
+  subject        String
+  body           String
+  audience       String   @default("all")
+  status         String   @default("draft")
+  recipientCount Int      @default(0)
+  sentAt         DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("newsletter_broadcasts")
+}
+
+model HelpdeskMacro {
+  id        String   @id @default(cuid())
+  orgId     String   @default("default")
+  title     String
+  body      String
+  category  String   @default("General")
+  useCount  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("helpdesk_macros")
+}
+
+// ── TASKS ─────────────────────────────────────────────────────────────────────
+
+model Task {
+  id          String       @id @default(cuid())
+  orgId       String       @default("default")
+  title       String
+  priority    TaskPriority @default(MEDIUM)
+  status      TaskStatus   @default(TODO)
+  assignedTo  String?
+  dueDate     DateTime?
+  completedAt DateTime?
+  linkedType  String?
+  linkedId    String?
+  notes       String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("tasks")
+}
+
+enum TaskPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+// ── EMAIL SEQUENCES ───────────────────────────────────────────────────────────
+
+model EmailSequence {
+  id          String               @id @default(cuid())
+  orgId       String               @default("default")
+  name        String
+  description String?
+  trigger     String               @default("manual")
+  isActive    Boolean              @default(true)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  steps       EmailStep[]
+  enrollments SequenceEnrollment[]
+
+  @@map("email_sequences")
+}
+
+model EmailStep {
+  id          String        @id @default(cuid())
+  sequenceId  String
+  stepNumber  Int
+  dayOffset   Int           @default(0)
+  subject     String
+  body        String
+  fromName    String        @default("Max EV Digital")
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  sequence    EmailSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  @@map("email_steps")
+}
+
+model SequenceEnrollment {
+  id           String             @id @default(cuid())
+  sequenceId   String
+  contactEmail String
+  contactName  String
+  contactType  String             @default("lead")
+  contactId    String?
+  status       EnrollmentStatus   @default(ACTIVE)
+  currentStep  Int                @default(0)
+  nextSendAt   DateTime?
+  enrolledAt   DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  sequence     EmailSequence      @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  @@map("sequence_enrollments")
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  UNSUBSCRIBED
+}
+
+// ── EXPENSES ──────────────────────────────────────────────────────────────────
+
+model Expense {
+  id          String        @id @default(cuid())
+  orgId       String        @default("default")
+  description String
+  amount      Float
+  category    String
+  vendor      String?
+  expenseDate DateTime      @default(now())
+  receiptUrl  String?
+  status      ExpenseStatus @default(PENDING)
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@map("expenses")
+}
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ── EMAIL INBOX ───────────────────────────────────────────────────────────────
+
+model EmailAccount {
+  id           String    @id @default(cuid())
+  label        String    @default("Admin Inbox")
+  email        String    @unique
+  imapHost     String    @default("imap.hostinger.com")
+  imapPort     Int       @default(993)
+  imapPass     String    @default("")
+  smtpHost     String    @default("smtp.hostinger.com")
+  smtpPort     Int       @default(465)
+  smtpPass     String    @default("")
+  fromName     String    @default("Max EV Digital")
+  lastInboxUid Int       @default(0)
+  lastSentUid  Int       @default(0)
+  lastSyncAt   DateTime?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  @@map("email_accounts")
+}
+
+model EmailMessage {
+  id            String   @id @default(cuid())
+  accountId     String   @default("main")
+  messageId     String   @unique
+  uid           Int      @default(0)
+  folder        String   @default("INBOX")
+  subject       String?
+  fromEmail     String
+  fromName      String?
+  toRaw         String   @default("[]")
+  ccRaw         String?
+  bodyHtml      String?  @db.Text
+  bodyText      String?  @db.Text
+  snippet       String?
+  isRead        Boolean  @default(false)
+  isStarred     Boolean  @default(false)
+  isSent        Boolean  @default(false)
+  threadId      String?
+  inReplyTo     String?
+  references    String?  @db.Text
+  hasAttachment Boolean  @default(false)
+  attachments   Json?
+  receivedAt    DateTime
+  leadId        String?
+  lead          Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  clientId      String?
+  client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([fromEmail])
+  @@index([leadId])
+  @@index([clientId])
+  @@index([threadId])
+  @@index([receivedAt(sort: Desc)])
+  @@map("email_messages")
+}
+
+// ── JOB APPLICATIONS ─────────────────────────────────────────────────────────
+
+model JobApplication {
+  id          String    @id @default(cuid())
+  company     String
+  role        String
+  type        Int       // 1=Creative, 2=Marketing, 3=Solutions, 4=FDE/AI
+  status      String    @default("building") // building/ready/applied/interview/offer/rejected
+  salaryMin   Int?
+  salaryMax   Int?
+  location    String?
+  isRemote    Boolean   @default(false)
+  applyUrl    String?
+  pdfFilename String?
+  notes       String?
+  appliedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("job_applications")
+}
+
+// ── GOOGLE CALENDAR ───────────────────────────────────────────────────────────
+
+model GoogleCalendarToken {
+  id           String   @id @default(cuid())
+  orgId        String   @default("default") @unique
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime
+  calendarId   String   @default("primary")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("google_calendar_tokens")
+}

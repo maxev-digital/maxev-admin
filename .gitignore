@@ -1,0 +1,69 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files — never commit real credentials
+.env
+.env.local
+.env.production
+.env.production.local
+.env.development.local
+.env.test.local
+# allow example file
+!.env.example
+
+# ppk / private keys
+*.ppk
+
+# Windows path artifacts
+D:*
+
+# Internal docs
+CLAUDE.md
+AGENTS.md
+SMARTSHIELD_DEMO_SCRIPT.md
+
+# Deploy / migration scripts (internal)
+deploy.sh
+backup-demo-db.sh
+restore-demo-db.sh
+migrate-demo*.mjs
+
+# Seed scripts with potential client data
+seed*.js
+seed*.ts
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
