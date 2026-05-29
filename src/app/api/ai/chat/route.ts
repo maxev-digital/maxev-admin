@@ -5,7 +5,17 @@ import { prisma } from '@/lib/db';
 
 // ── DB context snapshot ────────────────────────────────────────────────────────
 
+let contextCache: { data: Awaited<ReturnType<typeof _fetchBusinessContext>>; ts: number } | null = null;
+const CACHE_TTL = 60_000;
+
 async function fetchBusinessContext() {
+  if (contextCache && Date.now() - contextCache.ts < CACHE_TTL) return contextCache.data;
+  const data = await _fetchBusinessContext();
+  contextCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function _fetchBusinessContext() {
   try {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);

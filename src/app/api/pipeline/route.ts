@@ -6,22 +6,20 @@ export async function GET() {
   const leads = await prisma.lead.findMany({
     where: { stage: { not: 'DEAD' } },
     orderBy: { createdAt: 'desc' },
+    take: 500,
   });
 
-  // Attach the latest signed proposal totals so the Convert modal can pre-fill correctly
+  // Attach the latest signed proposal so the Convert modal can pre-fill correctly
   const leadIds = leads.map((l) => l.id);
   const proposals = await prisma.proposal.findMany({
     where: { leadId: { in: leadIds }, status: 'SIGNED' },
     select: { leadId: true, oneTimeTotal: true, monthlyTotal: true, packageTier: true },
+    distinct: ['leadId'],
     orderBy: { signedAt: 'desc' },
   });
   const proposalMap = new Map(proposals.map((p) => [p.leadId, p]));
 
-  const result = leads.map((l) => {
-    const p = proposalMap.get(l.id);
-    return { ...l, signedProposal: p ?? null };
-  });
-
+  const result = leads.map((l) => ({ ...l, signedProposal: proposalMap.get(l.id) ?? null }));
   return NextResponse.json(result);
 }
 

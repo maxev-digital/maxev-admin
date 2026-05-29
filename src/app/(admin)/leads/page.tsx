@@ -4,7 +4,13 @@ import LeadQueueTable from '@/components/LeadQueueTable';
 
 async function getStats() {
   try {
-    const res = await fetch('http://localhost:3001/api/admin/leads/stats', { cache: 'no-store' });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch('http://localhost:3001/api/admin/leads/stats', {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
     if (!res.ok) throw new Error('fetch failed');
     return res.json();
   } catch {

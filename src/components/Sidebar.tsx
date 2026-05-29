@@ -140,9 +140,9 @@ const nav = [
     ],
   },
   {
-    group: 'Job Hunt',
+    group: 'Engagements',
     items: [
-      { label: 'Job Pipeline', href: '/jobs', icon: Briefcase },
+      { label: 'Client Pipeline', href: '/jobs', icon: Briefcase },
     ],
   },
   {

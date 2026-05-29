@@ -14,8 +14,9 @@ export async function GET() {
     prisma.lead.findMany({
       where: { stage: { notIn: ['LIVE', 'ON_RETAINER', 'DEAD'] } },
       select: { businessName: true, estimatedValue: true },
+      take: 100,
     }),
-    prisma.invoice.findMany({ where: { status: 'OVERDUE' }, select: { amount: true } }),
+    prisma.invoice.findMany({ where: { status: 'OVERDUE' }, select: { amount: true }, take: 50 }),
     prisma.lead.findMany({
       where: { priority: 'HOT', stage: { notIn: ['LIVE', 'ON_RETAINER', 'DEAD'] } },
       select: { businessName: true }, take: 5,

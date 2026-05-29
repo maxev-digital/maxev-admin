@@ -124,6 +124,8 @@ model Client {
   recurringBilling RecurringBilling?
   emails           EmailMessage[]
 
+  @@index([status])
+  @@index([orgId, status])
   @@map("clients")
 }
 
@@ -224,6 +226,10 @@ model Lead {
   outreachHistory OutreachHistory[]
   emails          EmailMessage[]
 
+  @@index([stage])
+  @@index([priority])
+  @@index([stage, priority])
+  @@index([updatedAt(sort: Desc)])
   @@map("leads")
 }
 
@@ -310,6 +316,8 @@ model Proposal {
   client          Client?        @relation(fields: [clientId], references: [id])
   invoices        Invoice[]
 
+  @@index([status])
+  @@index([leadId, status])
   @@map("proposals")
 }
 
@@ -344,6 +352,9 @@ model Invoice {
   client         Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
   proposal       Proposal?     @relation(fields: [proposalId], references: [id])
 
+  @@index([status])
+  @@index([clientId, status])
+  @@index([dueDate])
   @@map("invoices")
 }
 
@@ -697,6 +708,8 @@ model Ticket {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
+  @@index([status])
+  @@index([status, priority])
   @@map("tickets")
 }
 
@@ -759,6 +772,8 @@ model Task {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
+  @@index([status])
+  @@index([status, dueDate])
   @@map("tasks")
 }
 
@@ -925,20 +940,48 @@ model JobApplication {
   id          String    @id @default(cuid())
   company     String
   role        String
-  type        Int       // 1=Creative, 2=Marketing, 3=Solutions, 4=FDE/AI
-  status      String    @default("building") // building/ready/applied/interview/offer/rejected
-  salaryMin   Int?
-  salaryMax   Int?
-  location    String?
-  isRemote    Boolean   @default(false)
-  applyUrl    String?
-  pdfFilename String?
-  notes       String?
-  appliedAt   DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  type         Int       // 1=Creative, 2=Marketing, 3=Solutions, 4=FDE/AI, 5=Eng On-Ramp, 6=DevRel/Growth, 7=Domain Vertical
+  status       String    @default("building") // building/ready/applied/interview/offer/rejected
+  salaryMin    Int?
+  salaryMax    Int?
+  location     String?
+  isRemote     Boolean   @default(false)
+  applyUrl     String?
+  pdfFilename  String?
+  notes        String?
+  appliedAt    DateTime?
+  matchScore   Int?
+  tags         String[]
+  postedDate   DateTime?
+  companyStage String?   // startup | growth | enterprise
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@map("job_applications")
+}
+
+// ── CARDIFF LENDING LEADS ─────────────────────────────────────────────────────
+
+model LendingLead {
+  id              String   @id @default(cuid())
+  businessName    String
+  ownerName       String
+  email           String
+  phone           String
+  loanAmount      String
+  businessType    String
+  industry        String
+  yearsInBusiness String
+  applicationId   String?
+  status          String   @default("PENDING")
+  aiDecision      String?
+  aiConfidence    Float?
+  aiReasoning     String?
+  slackPosted     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("lending_leads")
 }
 
 // ── GOOGLE CALENDAR ───────────────────────────────────────────────────────────
