@@ -28,6 +28,18 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   }
 }
 
+export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    await requireAuth();
+    const { id } = await params;
+    await prisma.emailMessage.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error('[email/messages/:id DELETE]', err);
+    return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
+  }
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     await requireAuth();

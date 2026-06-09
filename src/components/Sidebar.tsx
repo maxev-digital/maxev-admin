@@ -185,7 +185,7 @@ export default function Sidebar() {
       <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', padding: collapsed ? '16px 0' : undefined, gap: 8 }}>
         {!collapsed && (
           <>
-            <img src="/max-ev-digital_logo.png" alt="Max EV Digital" style={{ width: 130, height: 'auto', display: 'block' }} />
+            <img src="/max_ev_black_bg.png" alt="Max EV Digital" style={{ width: 130, height: 'auto', display: 'block' }} />
             <div className="sidebar-logo-sub" style={{ display: 'none' }}>Admin Panel</div>
           </>
         )}

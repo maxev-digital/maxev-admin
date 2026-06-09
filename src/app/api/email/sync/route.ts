@@ -27,7 +27,7 @@ export async function GET() {
     await requireAuth();
     const accounts = await prisma.emailAccount.findMany({
       where: { isActive: true },
-      select: { id: true, email: true, label: true, lastSyncAt: true, fromName: true },
+      select: { id: true, email: true, label: true, lastSyncAt: true, fromName: true, signature: true },
       orderBy: { createdAt: 'asc' },
     });
     return NextResponse.json({

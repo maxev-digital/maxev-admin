@@ -16,8 +16,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (body.smtpHost !== undefined) data.smtpHost = body.smtpHost;
     if (body.smtpPort !== undefined) data.smtpPort = body.smtpPort;
     if (body.smtpPass !== undefined) data.smtpPass = body.smtpPass;
-    if (body.fromName !== undefined) data.fromName = body.fromName;
-    if (body.isActive !== undefined) data.isActive = body.isActive;
+    if (body.fromName  !== undefined) data.fromName  = body.fromName;
+    if (body.signature !== undefined) data.signature = body.signature;
+    if (body.isActive  !== undefined) data.isActive  = body.isActive;
 
     const account = await prisma.emailAccount.update({ where: { id }, data });
     return NextResponse.json(account);

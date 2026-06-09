@@ -59,7 +59,7 @@ async function getTransport(accountId?: string) {
 export async function POST(req: NextRequest) {
   try {
     await requireAuth();
-    const { to, cc, subject, bodyHtml, bodyText, inReplyTo, replyToMessageId, leadId, clientId, accountId } = await req.json();
+    const { to, cc, bcc, subject, bodyHtml, bodyText, inReplyTo, replyToMessageId, leadId, clientId, accountId } = await req.json();
 
     if (!to?.trim() || !subject?.trim()) {
       return NextResponse.json({ error: 'to and subject are required' }, { status: 400 });
@@ -74,7 +74,8 @@ export async function POST(req: NextRequest) {
     await transport.sendMail({
       from:    `"${fromName}" <${fromEmail}>`,
       to,
-      cc:      cc || undefined,
+      cc:      cc  || undefined,
+      bcc:     bcc || undefined,
       subject,
       html:    bodyHtml || bodyText || '',
       text:    bodyText || '',

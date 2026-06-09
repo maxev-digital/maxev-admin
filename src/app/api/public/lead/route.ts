@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { sendOwnerNewLeadAlert } from '@/lib/email';
+import { sendSms } from '@/lib/sms';
 
 export async function OPTIONS() {
   return new NextResponse(null, {
@@ -10,6 +11,17 @@ export async function OPTIONS() {
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     },
+  });
+}
+
+async function sendTelegramAlert(text: string) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
   });
 }
 
@@ -57,6 +69,23 @@ export async function POST(req: NextRequest) {
       source:       lead.source,
       notes:        lead.notes,
     }).catch((err) => console.error('[email] owner alert failed:', err));
+
+    const ownerPhone = process.env.OWNER_PHONE;
+    if (ownerPhone) {
+      const smsBody = `New lead: ${lead.businessName} (${lead.industry})${lead.contactName ? ` — ${lead.contactName}` : ''}${lead.phone ? ` · ${lead.phone}` : ''}${lead.email ? ` · ${lead.email}` : ''}`;
+      sendSms(ownerPhone, smsBody).catch((err) => console.error('[sms] owner alert failed:', err));
+    }
+
+    const lines = [
+      `<b>New Lead — MAX EV Digital</b>`,
+      `Business: ${lead.businessName}`,
+      `Industry: ${lead.industry}`,
+      lead.contactName ? `Contact: ${lead.contactName}` : null,
+      lead.phone       ? `Phone: ${lead.phone}`         : null,
+      lead.email       ? `Email: ${lead.email}`         : null,
+      lead.notes       ? `Notes: ${lead.notes}`         : null,
+    ].filter(Boolean).join('\n');
+    sendTelegramAlert(lines).catch((err) => console.error('[telegram] lead alert failed:', err));
 
     return NextResponse.json({ success: true, id: lead.id }, { headers: corsHeaders });
   } catch (err) {

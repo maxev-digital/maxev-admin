@@ -887,6 +887,7 @@ model EmailAccount {
   smtpPort     Int       @default(465)
   smtpPass     String    @default("")
   fromName     String    @default("Max EV Digital")
+  signature    String?   @db.Text
   lastInboxUid Int       @default(0)
   lastSentUid  Int       @default(0)
   lastSyncAt   DateTime?
