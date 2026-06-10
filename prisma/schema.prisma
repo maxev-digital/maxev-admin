@@ -985,6 +985,87 @@ model LendingLead {
   @@map("lending_leads")
 }
 
+// ── MARKETING OS ─────────────────────────────────────────────────────────────
+
+model MarketingProject {
+  id          String   @id @default(cuid())
+  orgId       String   @default("default")
+  name        String
+  domain      String
+  description String
+  industry    String
+  audience    String
+  brandVoice  String
+  logoUrl     String?
+  color       String   @default("#2563EB")
+  status      String   @default("active")
+  channels    MarketingChannel[]
+  campaigns   MarketingCampaign[]
+  contentItems ContentItem[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("marketing_projects")
+}
+
+model MarketingChannel {
+  id          String           @id @default(cuid())
+  projectId   String
+  platform    String
+  handle      String?
+  url         String?
+  connected   Boolean          @default(false)
+  followers   Int?
+  lastUpdated DateTime?
+  project     MarketingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("marketing_channels")
+}
+
+model MarketingCampaign {
+  id          String           @id @default(cuid())
+  orgId       String           @default("default")
+  projectId   String
+  name        String
+  goal        String
+  platforms   String           @default("[]")
+  startDate   DateTime
+  endDate     DateTime?
+  status      String           @default("draft")
+  contentItems ContentItem[]
+  project     MarketingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("marketing_campaigns")
+}
+
+model ContentItem {
+  id          String            @id @default(cuid())
+  orgId       String            @default("default")
+  projectId   String
+  campaignId  String?
+  platform    String
+  contentType String            @default("post")
+  copy        String            @db.Text
+  hashtags    String?
+  imagePrompt String?
+  status      String            @default("draft")
+  scheduledAt DateTime?
+  postedAt    DateTime?
+  bufferJobId String?
+  engagements Int?
+  project     MarketingProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  campaign    MarketingCampaign? @relation(fields: [campaignId], references: [id])
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([projectId, status])
+  @@index([platform, status])
+  @@index([scheduledAt])
+  @@map("content_items")
+}
+
 // ── GOOGLE CALENDAR ───────────────────────────────────────────────────────────
 
 model GoogleCalendarToken {
@@ -998,4 +1079,18 @@ model GoogleCalendarToken {
   updatedAt    DateTime @updatedAt
 
   @@map("google_calendar_tokens")
+}
+
+// ── AI ACTION AUDIT LOG ───────────────────────────────────────────────────────
+
+model AiActionLog {
+  id            String   @id @default(cuid())
+  orgId         String   @default("default")
+  message       String   @db.Text
+  actionType    String
+  actionPayload String?  @db.Text
+  model         String
+  createdAt     DateTime @default(now())
+
+  @@map("ai_action_logs")
 }

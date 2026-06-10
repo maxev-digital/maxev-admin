@@ -405,6 +405,75 @@ Return this exact JSON array:
   }
 }
 
+// ── Streaming ─────────────────────────────────────────────────────────────────
+
+export async function claudeStream(
+  prompt: string,
+  options: {
+    system?: string;
+    model?: ClaudeModel;
+    maxTokens?: number;
+    tools?: Anthropic.Tool[];
+  } = {}
+): Promise<ReadableStream<Uint8Array>> {
+  const { system, model = MODELS.sonnet, maxTokens = 800, tools } = options;
+  const encoder = new TextEncoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const stream = client.messages.stream({
+          model,
+          max_tokens: maxTokens,
+          system: system ?? 'You are a helpful AI assistant.',
+          messages: [{ role: 'user', content: prompt }],
+          ...(tools && tools.length > 0 ? { tools } : {}),
+        });
+
+        for await (const event of stream) {
+          if (
+            event.type === 'content_block_delta' &&
+            event.delta.type === 'text_delta'
+          ) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: 'token', text: event.delta.text })}\n\n`
+              )
+            );
+          }
+        }
+
+        const finalMsg = await stream.finalMessage();
+        let toolName: string | null = null;
+        let toolInput: Record<string, unknown> | null = null;
+
+        if (finalMsg.stop_reason === 'tool_use') {
+          const toolBlock = finalMsg.content.find((b) => b.type === 'tool_use');
+          if (toolBlock && toolBlock.type === 'tool_use') {
+            toolName = toolBlock.name;
+            toolInput = toolBlock.input as Record<string, unknown>;
+          }
+        }
+
+        const modelLabel = finalMsg.model?.includes('haiku') ? 'haiku' : 'sonnet';
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: 'done', toolName, toolInput, model: modelLabel })}\n\n`
+          )
+        );
+        controller.close();
+      } catch (err) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: 'error', message: String(err) })}\n\n`
+          )
+        );
+        controller.close();
+      }
+    },
+  });
+}
+
 export async function getNextBestActions(leads: Array<{
   businessName: string;
   stage: string;

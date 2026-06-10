@@ -59,10 +59,10 @@ type StatsData = {
   topClients:        { name: string; arr: string; mrr: number; risk: string }[];
 };
 
-// ── Static goal constants (not sourced from DB) ───────────────────────────────
+// ── Static goal constants ─────────────────────────────────────────────────────
 
-const MRR_TREND  = [8200, 9100, 8800, 10200, 11400, 12800];
-const MRR_LABELS = ['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May'];
+const MRR_TREND_FALLBACK  = [8200, 9100, 8800, 10200, 11400, 12800];
+const MRR_LABELS_FALLBACK = ['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May'];
 const MRR_GOAL   = 15000;
 const PIPE_TARGET = 50000;
 const CLIENT_TARGET = 20;
@@ -310,6 +310,9 @@ export default function MaxAIInsightsPage() {
   const [recs, setRecs]             = useState<Recommendation[]>([]);
   const [patterns, setPatterns]     = useState<Pattern[]>([]);
   const [broadcasts, setBroadcasts] = useState<Array<{ id: string; subject: string; recipientCount: number; status: string; sentAt: string | null }>>([]);
+  const [mrrTrend, setMrrTrend]     = useState<number[]>(MRR_TREND_FALLBACK);
+  const [mrrLabels, setMrrLabels]   = useState<string[]>(MRR_LABELS_FALLBACK);
+  const [mrrGoal, setMrrGoal]       = useState<number>(MRR_GOAL);
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState('');
   const [updatedAt, setUpdatedAt]   = useState<Date | null>(null);
@@ -321,7 +324,7 @@ export default function MaxAIInsightsPage() {
     setLoading(true);
     setError('');
     try {
-      const [b, a, s, h, r, p, bc] = await Promise.all([
+      const [b, a, s, h, r, p, bc, mt] = await Promise.all([
         fetch('/api/ai/briefing').then((r) => r.ok ? r.json() : Promise.reject(r.status)),
         fetch('/api/ai/next-actions').then((r) => r.ok ? r.json() : null),
         fetch('/api/ai/stats').then((r) => r.ok ? r.json() : null),
@@ -329,6 +332,7 @@ export default function MaxAIInsightsPage() {
         fetch('/api/ai/recommendations').then((r) => r.ok ? r.json() : null),
         fetch('/api/ai/patterns').then((r) => r.ok ? r.json() : null),
         fetch('/api/comms/newsletter').then((r) => r.ok ? r.json() : null),
+        fetch('/api/ai/mrr-trend').then((r) => r.ok ? r.json() : null),
       ]);
       setBriefing(b);
       if (a) setActions(a);
@@ -337,6 +341,7 @@ export default function MaxAIInsightsPage() {
       if (r?.recommendations) setRecs(r.recommendations);
       if (p?.patterns) setPatterns(p.patterns);
       if (bc?.broadcasts) setBroadcasts((bc.broadcasts as Array<{ id: string; subject: string; recipientCount: number; status: string; sentAt: string | null }>).slice(0, 5));
+      if (mt?.data?.length) { setMrrTrend(mt.data); setMrrLabels(mt.labels); setMrrGoal(mt.goal ?? MRR_GOAL); }
       setUpdatedAt(new Date());
     } catch {
       setError('Cannot reach MAX AI Engine. Vitals unavailable.');
@@ -358,7 +363,7 @@ export default function MaxAIInsightsPage() {
 
   // ── Live stats derived from DB ─────────────────────────────────────────────
   const liveMrr            = stats?.mrrTotal ?? 0;
-  const liveMrrPct         = MRR_GOAL > 0 ? liveMrr / MRR_GOAL : 0;
+  const liveMrrPct         = mrrGoal > 0 ? liveMrr / mrrGoal : 0;
   const livePipelineStages = stats?.pipelineStages ?? [];
   const liveRevenueTiers   = stats?.revenueTiers ?? [];
   const liveRevenueTotal   = liveRevenueTiers.reduce((s, t) => s + t.amount, 0);
@@ -567,8 +572,8 @@ export default function MaxAIInsightsPage() {
             <span style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.14em', color: lbl, textTransform: 'uppercase' }}>MRR Trend</span>
           </div>
           <div style={{ fontSize: '1.45rem', fontWeight: 900, color: greenText, lineHeight: 1, marginBottom: 8 }}>${(liveMrr / 1000).toFixed(1)}k</div>
-          <Sparkline data={MRR_TREND} color={greenText} labels={MRR_LABELS} isDark={isDark} />
-          <div style={{ fontSize: '0.62rem', color: dim, marginTop: 5 }}>Goal: ${(MRR_GOAL / 1000).toFixed(0)}k/mo</div>
+          <Sparkline data={mrrTrend} color={greenText} labels={mrrLabels} isDark={isDark} />
+          <div style={{ fontSize: '0.62rem', color: dim, marginTop: 5 }}>Goal: ${(mrrGoal / 1000).toFixed(0)}k/mo</div>
         </div>
         <div style={{ background: cb, border: `1px solid ${bd}`, borderRadius: 14, padding: '18px 14px 12px' }}>
           <div style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.14em', color: lbl, textTransform: 'uppercase', marginBottom: 10 }}>Client Health</div>
@@ -587,8 +592,8 @@ export default function MaxAIInsightsPage() {
             <Ring pct={liveMrrPct} color="#2563EB" center={`${Math.round(liveMrrPct * 100)}%`} sub="of goal" isDark={isDark} />
             <div>
               <div style={{ fontSize: '0.77rem', color: body, marginBottom: 4 }}><span style={{ fontWeight: 700, color: '#3B7DD9' }}>${(liveMrr / 1000).toFixed(1)}k</span> MRR</div>
-              <div style={{ fontSize: '0.73rem', color: dim, marginBottom: 4 }}>${((MRR_GOAL - liveMrr) / 1000).toFixed(1)}k to goal</div>
-              <div style={{ fontSize: '0.73rem', color: dim }}>Goal: ${(MRR_GOAL / 1000).toFixed(0)}k</div>
+              <div style={{ fontSize: '0.73rem', color: dim, marginBottom: 4 }}>${((mrrGoal - liveMrr) / 1000).toFixed(1)}k to goal</div>
+              <div style={{ fontSize: '0.73rem', color: dim }}>Goal: ${(mrrGoal / 1000).toFixed(0)}k</div>
             </div>
           </div>
         </div>
@@ -808,20 +813,29 @@ export default function MaxAIInsightsPage() {
               </div>
             </div>
           )) : emptyMsg('No leads in pipeline yet.')}
-          <div style={{ borderTop: `1px solid ${bd}`, marginTop: 12, paddingTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {SALES_METRICS.map(({ label, value, trend, good }) => (
-              <div key={label} style={{ padding: '8px 10px', background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: `1px solid ${bd}` }}>
-                <div style={{ fontSize: '0.62rem', color: lbl, marginBottom: 3 }}>{label}</div>
-                <div style={{ fontSize: '0.95rem', fontWeight: 900, color: 'var(--white)' }}>{value}</div>
-                <div style={{ fontSize: '0.62rem', color: good ? '#14B8AD' : '#E05252', marginTop: 2 }}>{good ? '▲' : '▼'} {trend}</div>
-              </div>
-            ))}
+          <div style={{ borderTop: `1px solid ${bd}`, marginTop: 12, paddingTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: '0.62rem', fontWeight: 700, color: lbl, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Sales Performance</span>
+              <span style={{ fontSize: '0.55rem', background: 'rgba(59,130,246,0.15)', color: '#3B7DD9', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 4, padding: '1px 5px', fontWeight: 600 }}>Demo Data</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {SALES_METRICS.map(({ label, value, trend, good }) => (
+                <div key={label} style={{ padding: '8px 10px', background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: `1px solid ${bd}` }}>
+                  <div style={{ fontSize: '0.62rem', color: lbl, marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 900, color: 'var(--white)' }}>{value}</div>
+                  <div style={{ fontSize: '0.62rem', color: good ? '#14B8AD' : '#E05252', marginTop: 2 }}>{good ? '▲' : '▼'} {trend}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
         {/* Marketing / Email Performance */}
         <div style={{ background: cb, border: `1px solid ${bd}`, borderRadius: 14, padding: '18px 20px' }}>
-          <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.14em', color: lbl, textTransform: 'uppercase', marginBottom: 14 }}>Marketing &amp; Email Performance</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.14em', color: lbl, textTransform: 'uppercase' }}>Marketing &amp; Email Performance</span>
+            <span style={{ fontSize: '0.55rem', background: 'rgba(59,130,246,0.15)', color: '#3B7DD9', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 4, padding: '1px 5px', fontWeight: 600 }}>Demo Data</span>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
             {EMAIL_METRICS.map(({ label, value, bench, good }) => (
               <div key={label} style={{ padding: '10px 12px', background: good ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', border: `1px solid ${good ? 'rgba(16,185,129,0.18)' : 'rgba(239,68,68,0.18)'}`, borderRadius: 8 }}>

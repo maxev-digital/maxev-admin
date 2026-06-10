@@ -1,7 +1,29 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth';
-import { claudeComplete, MODELS } from '@/lib/claude';
+import { claudeStream, MODELS } from '@/lib/claude';
 import { prisma } from '@/lib/db';
+import Anthropic from '@anthropic-ai/sdk';
+
+// ── SSE helpers ────────────────────────────────────────────────────────────────
+
+const SSE_HEADERS = {
+  'Content-Type': 'text/event-stream',
+  'Cache-Control': 'no-cache',
+  'Connection': 'keep-alive',
+};
+
+function sseError(msg: string): Response {
+  const enc = new TextEncoder();
+  return new Response(
+    new ReadableStream({
+      start(c) {
+        c.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`));
+        c.close();
+      },
+    }),
+    { headers: SSE_HEADERS }
+  );
+}
 
 // ── DB context snapshot ────────────────────────────────────────────────────────
 
@@ -22,7 +44,6 @@ async function _fetchBusinessContext() {
 
     const [
       overdueInvoices,
-      recentInvoices,
       hotLeads,
       allLeads,
       openTickets,
@@ -35,11 +56,6 @@ async function _fetchBusinessContext() {
         include: { client: { select: { businessName: true, contactName: true, email: true } } },
         orderBy: { dueDate: 'asc' },
         take: 15,
-      }),
-      prisma.invoice.findMany({
-        orderBy: { createdAt: 'desc' },
-        include: { client: { select: { businessName: true } } },
-        take: 5,
       }),
       prisma.lead.findMany({
         where: { priority: 'HOT', stage: { notIn: ['DEAD', 'ON_RETAINER'] } },
@@ -105,7 +121,7 @@ async function _fetchBusinessContext() {
   }
 }
 
-// ── Routes the AI can navigate ─────────────────────────────────────────────────
+// ── Routes ─────────────────────────────────────────────────────────────────────
 
 const ROUTES = [
   { path: '/dashboard',          label: 'Dashboard',          description: 'KPIs, MRR, active clients, activity feed' },
@@ -129,8 +145,218 @@ const ROUTES = [
   { path: '/inventory',          label: 'Inventory',          description: 'Products, stock levels, purchase orders, suppliers' },
   { path: '/booking',            label: 'Booking & Schedule', description: 'Appointment calendar, services, staff' },
   { path: '/system',             label: 'System Settings',    description: 'Team management, integrations, settings' },
-  { path: '/ai-assistant',       label: 'AI Assistant Guide', description: 'Full capability guide — what the AI can and cannot do' },
 ];
+
+// ── Tool definitions ───────────────────────────────────────────────────────────
+
+const CHAT_TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'navigate',
+    description: 'Navigate to a page in the admin panel. Use this whenever the user asks to go to, show, or open a page.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Path including any query params, e.g. /invoices?status=OVERDUE' },
+        description: { type: 'string', description: 'Short label shown in the UI, e.g. "Overdue Invoices"' },
+      },
+      required: ['path', 'description'],
+    },
+  },
+  {
+    name: 'filter',
+    description: 'Navigate to a page with specific filter parameters applied.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        params: { type: 'object', description: 'Query params object e.g. { "status": "OVERDUE" }' },
+        description: { type: 'string' },
+      },
+      required: ['path', 'params', 'description'],
+    },
+  },
+  {
+    name: 'draft_proposal',
+    description: 'Open a proposal draft form pre-filled with details for the user to review and approve.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string', description: 'Short label, e.g. "Proposal for Acme Corp"' },
+        businessName: { type: 'string' },
+        industry: { type: 'string' },
+        packageTier: { type: 'string', enum: ['STARTER', 'GROWTH', 'PRO', 'ENTERPRISE'] },
+        lineItems: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              type: { type: 'string', enum: ['one-time', 'monthly'] },
+              price: { type: 'string' },
+            },
+            required: ['name', 'type', 'price'],
+          },
+        },
+        oneTimeTotal: { type: 'number' },
+        monthlyTotal: { type: 'number' },
+        notes: { type: 'string' },
+      },
+      required: ['businessName', 'industry', 'packageTier', 'lineItems', 'oneTimeTotal', 'monthlyTotal'],
+    },
+  },
+  {
+    name: 'draft_invoice',
+    description: 'Open an invoice draft form pre-filled for the user to review and approve.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        clientId: { type: 'string', description: 'UUID of the client from context' },
+        clientName: { type: 'string' },
+        invoiceType: { type: 'string', enum: ['DEPOSIT', 'FINAL', 'RETAINER', 'CUSTOM'] },
+        amount: { type: 'number' },
+        dueDate: { type: 'string', description: 'YYYY-MM-DD format' },
+        notes: { type: 'string' },
+      },
+      required: ['clientName', 'invoiceType', 'amount'],
+    },
+  },
+  {
+    name: 'create_lead',
+    description: 'Open a new lead form pre-filled for the user to confirm and save.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        businessName: { type: 'string' },
+        contactName: { type: 'string' },
+        email: { type: 'string' },
+        phone: { type: 'string' },
+        industry: { type: 'string' },
+        stage: { type: 'string', enum: ['LEAD', 'CONTACTED', 'DEMO_SCHEDULED', 'PROPOSAL_SENT', 'NEGOTIATION', 'CONTRACT_SIGNED'] },
+        priority: { type: 'string', enum: ['HOT', 'WARM', 'COLD'] },
+        estimatedValue: { type: 'number' },
+        source: { type: 'string' },
+        notes: { type: 'string' },
+      },
+      required: ['businessName'],
+    },
+  },
+  {
+    name: 'create_task',
+    description: 'Open a new task form pre-filled for the user to confirm.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        title: { type: 'string' },
+        priority: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
+        assignedTo: { type: 'string' },
+        dueDate: { type: 'string', description: 'YYYY-MM-DD format' },
+        notes: { type: 'string' },
+      },
+      required: ['title', 'priority'],
+    },
+  },
+  {
+    name: 'confirm_update',
+    description: 'Ask the user to confirm a record update before it executes (invoice status, lead stage, close ticket, add note).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        operation: {
+          type: 'string',
+          enum: ['update_invoice_status', 'move_lead_stage', 'close_ticket', 'add_note'],
+        },
+        description: { type: 'string', description: 'Plain English summary of what will change' },
+        payload: { type: 'object', description: 'Record IDs and new values needed to execute the update' },
+      },
+      required: ['operation', 'description', 'payload'],
+    },
+  },
+  {
+    name: 'draft_message',
+    description: 'Compose an email or SMS for the user to review and then actually send via the platform.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        to: { type: 'string', description: 'Email address or phone number' },
+        subject: { type: 'string', description: 'Email subject line (email only)' },
+        body: { type: 'string', description: 'Full message body' },
+        channel: { type: 'string', enum: ['email', 'sms'] },
+        clientId: { type: 'string', description: 'Client UUID if known from context' },
+      },
+      required: ['to', 'body', 'channel'],
+    },
+  },
+  {
+    name: 'send_proposal',
+    description: 'Send a proposal with e-sign link to a pipeline lead after user confirmation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        leadId: { type: 'string', description: 'Lead UUID from context — must be a real ID' },
+        leadName: { type: 'string' },
+        packageTier: { type: 'string', enum: ['STARTER', 'GROWTH', 'PRO', 'ENTERPRISE'] },
+        lineItems: { type: 'array', items: { type: 'object' } },
+        oneTimeTotal: { type: 'number' },
+        monthlyTotal: { type: 'number' },
+        message: { type: 'string', description: 'Personalized note to include in the email' },
+      },
+      required: ['leadId', 'leadName', 'packageTier', 'oneTimeTotal', 'monthlyTotal'],
+    },
+  },
+  {
+    name: 'convert_client',
+    description: 'Convert a CONTRACT_SIGNED lead to an active client after user confirmation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        leadId: { type: 'string', description: 'Lead UUID from context — must be a real ID' },
+        leadName: { type: 'string' },
+        packageTier: { type: 'string', enum: ['STARTER', 'GROWTH', 'PRO', 'ENTERPRISE'] },
+        setupFee: { type: 'string' },
+        monthly: { type: 'string' },
+      },
+      required: ['leadId', 'leadName', 'packageTier'],
+    },
+  },
+];
+
+// ── Tool → front-end action shape ─────────────────────────────────────────────
+
+function toolToAction(toolName: string, input: Record<string, unknown>): Record<string, unknown> | null {
+  const { description, ...data } = input;
+  const desc = (description as string) || toolName;
+
+  switch (toolName) {
+    case 'navigate':
+      return { type: 'navigate', path: input.path, description: input.description };
+    case 'filter':
+      return { type: 'filter', path: input.path, params: input.params, description: input.description };
+    case 'draft_proposal':
+      return { type: 'draft', docType: 'proposal', description: desc, data };
+    case 'draft_invoice':
+      return { type: 'draft', docType: 'invoice', description: desc, data };
+    case 'create_lead':
+      return { type: 'draft', docType: 'lead', description: desc, data };
+    case 'create_task':
+      return { type: 'draft', docType: 'task', description: desc, data };
+    case 'draft_message':
+      return { type: 'draft', docType: 'message', description: desc, data };
+    case 'confirm_update':
+      return { type: 'confirm', operation: input.operation, description: input.description, payload: input.payload };
+    case 'send_proposal':
+      return { type: 'confirm', operation: 'send_proposal', description: desc, payload: data };
+    case 'convert_client':
+      return { type: 'confirm', operation: 'convert_client', description: desc, payload: data };
+    default:
+      return null;
+  }
+}
 
 // ── System prompt ──────────────────────────────────────────────────────────────
 
@@ -142,63 +368,26 @@ PAGES YOU CAN NAVIGATE TO:
 ${ROUTES.map(r => `- ${r.label} (${r.path}): ${r.description}`).join('\n')}
 
 CAPABILITIES:
-1. NAVIGATE — Go to any page. Use filter params when relevant (e.g., /invoices?status=OVERDUE).
+1. NAVIGATE — Use the navigate or filter tool to go to any page.
 2. ANSWER WITH DATA — Answer questions using the live data. Be specific: names, amounts, dates.
-3. DRAFT PROPOSAL — When asked, generate a complete proposal draft for approval.
-4. DRAFT INVOICE — Generate an invoice draft for approval.
-5. CREATE LEAD — Capture a new lead for pipeline with confirmation.
-6. CREATE TASK — Add a task with confirmation.
-7. UPDATE RECORD — Change invoice status, move lead stage, close ticket, add note — all with confirmation first.
-8. SEND COMMUNICATION — Draft and SEND emails/SMS through the platform. You draft it, user sees the full preview and approves, then it actually sends via our SMTP/SMS system. Use real client email/phone from context.
-9. SEND PROPOSAL — Send a proposal with an e-sign link to a pipeline lead. Use the send_proposal confirm action. Pre-fill packageTier and totals from context where possible. Lead IDs are shown in brackets in the leads list above.
-10. CONVERT TO CLIENT — Convert a CONTRACT_SIGNED (or later) lead into an active client. Creates client profile, setup invoice, monthly billing schedule, and install appointment. Use convert_client confirm action. Lead must be past PROPOSAL_SENT stage.
+3. DRAFT PROPOSAL — Use the draft_proposal tool to generate a complete proposal for approval.
+4. DRAFT INVOICE — Use the draft_invoice tool to generate an invoice for approval.
+5. CREATE LEAD — Use the create_lead tool to capture a new lead with confirmation.
+6. CREATE TASK — Use the create_task tool to add a task with confirmation.
+7. UPDATE RECORD — Use the confirm_update tool to change invoice status, move lead stage, close ticket, or add note.
+8. SEND COMMUNICATION — Use the draft_message tool. You draft it, user sees the full preview and approves, then it actually sends via platform SMTP/SMS.
+9. SEND PROPOSAL — Use the send_proposal tool. Pre-fill from context. Lead IDs are shown in brackets in the leads list.
+10. CONVERT TO CLIENT — Use the convert_client tool. Lead must be past PROPOSAL_SENT stage.
 
-RESPONSE FORMAT — always return valid JSON:
-{
-  "message": "your response — specific, direct, like a sharp assistant",
-  "action": { ... }  // OPTIONAL — only include when needed
-}
-
-ACTION TYPES:
-
-Navigate:
-{ "type": "navigate", "path": "/path", "description": "label for UI" }
-
-Navigate with filter:
-{ "type": "filter", "path": "/invoices", "params": {"status": "OVERDUE"}, "description": "Filtered to overdue invoices" }
-
-Draft proposal:
-{ "type": "draft", "docType": "proposal", "description": "Proposal for X", "data": { "businessName": "", "industry": "", "packageTier": "STARTER|GROWTH|PRO|ENTERPRISE", "lineItems": [{"name": "", "type": "one-time|monthly", "price": "0"}], "oneTimeTotal": 0, "monthlyTotal": 0, "notes": "" } }
-
-Draft invoice:
-{ "type": "draft", "docType": "invoice", "description": "Invoice for X", "data": { "clientId": "", "clientName": "", "invoiceType": "DEPOSIT|FINAL|RETAINER|CUSTOM", "amount": 0, "dueDate": "YYYY-MM-DD", "notes": "" } }
-
-Create lead:
-{ "type": "draft", "docType": "lead", "description": "New lead: X", "data": { "businessName": "", "contactName": "", "email": "", "phone": "", "industry": "", "stage": "LEAD", "priority": "HOT|WARM|COLD", "estimatedValue": 0, "source": "", "notes": "" } }
-
-Create task:
-{ "type": "draft", "docType": "task", "description": "New task", "data": { "title": "", "priority": "HIGH|MEDIUM|LOW", "assignedTo": "", "dueDate": "YYYY-MM-DD", "notes": "" } }
-
-Confirm update:
-{ "type": "confirm", "operation": "update_invoice_status|move_lead_stage|close_ticket|add_note", "description": "what will happen", "payload": { ... relevant fields including id } }
-
-Draft outreach message (will actually send via the platform on approval — not clipboard):
-{ "type": "draft", "docType": "message", "description": "Outreach draft", "data": { "to": "recipient@email.com or +1XXXXXXXXXX", "subject": "Subject line (email only)", "body": "Full message body", "channel": "email|sms", "clientId": "client UUID if known from context" } }
-
-Send proposal with e-sign link (use real leadId from context):
-{ "type": "confirm", "operation": "send_proposal", "description": "Send PRO proposal to William Peterson ($2,898 setup + $49/mo)", "payload": { "leadId": "lead-uuid-from-context", "leadName": "William Peterson", "packageTier": "PRO", "lineItems": [{"name": "PRO Security Package", "type": "one-time", "price": "2898"}], "oneTimeTotal": 2898, "monthlyTotal": 49, "message": "" } }
-
-Convert lead to active client (use real leadId from context):
-{ "type": "confirm", "operation": "convert_client", "description": "Convert William Peterson to active client (PRO, $2,898 setup, $49/mo)", "payload": { "leadId": "lead-uuid-from-context", "leadName": "William Peterson", "packageTier": "PRO", "setupFee": "2898", "monthly": "49" } }
-
-BEHAVIOR RULES:
-- Be specific. Use real names and numbers from the live data. Never make up data.
-- Navigation requests: navigate + narrate ("Pulling up your overdue invoices — you have 3 totaling $5,200.")
+RESPONSE STYLE:
+- Your text response is the direct message to the user — write concise prose, no JSON.
+- Use the tools to take actions. Never describe action JSON in your text.
+- Navigation requests: navigate + narrate ("Pulling up your overdue invoices — you have 3 totaling $5,200.").
 - Data questions: answer directly with specifics before navigating.
-- Creation requests: generate a complete draft, prefill all fields you know from context.
-- When asked about a specific client/lead: use their real data from the context.
-- Keep messages concise — 2-5 sentences. Use line breaks. No filler.
-- Sound like a sharp executive assistant, not a chatbot.`;
+- Creation requests: use the tool to generate a complete draft, prefill all fields you know from context.
+- Keep messages to 2-5 sentences. Use line breaks. No filler.
+- Sound like a sharp executive assistant, not a chatbot.
+- Never make up data. Use real names and numbers from the live context.`;
 
 // ── Model routing ──────────────────────────────────────────────────────────────
 
@@ -226,9 +415,7 @@ export async function POST(req: NextRequest) {
       currentPath: string;
     };
 
-    if (!message?.trim()) {
-      return NextResponse.json({ message: 'No message received.', action: null });
-    }
+    if (!message?.trim()) return sseError('No message received.');
 
     const [{ context }, model] = await Promise.all([
       fetchBusinessContext(),
@@ -248,36 +435,76 @@ User is currently viewing: ${currentPath}`;
         ).join('\n') + '\n\n'
       : '';
 
-    const raw = await claudeComplete(`${historyBlock}User: ${message}`, {
+    const rawStream = await claudeStream(`${historyBlock}User: ${message}`, {
       model,
       maxTokens: 800,
       system: systemPrompt,
+      tools: CHAT_TOOLS,
     });
 
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return NextResponse.json({
-        message: raw.trim(),
-        action: null,
-        model: model === MODELS.haiku ? 'haiku' : 'sonnet',
-      });
-    }
+    // Transform stream: map tool calls to front-end action shapes + fire audit log
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-    const parsed = JSON.parse(jsonMatch[0]) as {
-      message: string;
-      action?: Record<string, unknown>;
-    };
+    const transform = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
 
-    return NextResponse.json({
-      message: parsed.message ?? raw.trim(),
-      action: parsed.action ?? null,
-      model: model === MODELS.haiku ? 'haiku' : 'sonnet',
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) {
+            controller.enqueue(encoder.encode(part + '\n\n'));
+            continue;
+          }
+          try {
+            const evt = JSON.parse(part.slice(6)) as {
+              type: string;
+              toolName?: string | null;
+              toolInput?: Record<string, unknown> | null;
+              model?: string;
+              text?: string;
+              message?: string;
+            };
+
+            if (evt.type === 'done') {
+              const action = evt.toolName
+                ? toolToAction(evt.toolName, evt.toolInput ?? {})
+                : null;
+
+              if (action) {
+                prisma.aiActionLog.create({
+                  data: {
+                    message: message.slice(0, 500),
+                    actionType: String(action.type ?? 'unknown'),
+                    actionPayload: JSON.stringify(action),
+                    model,
+                  },
+                }).catch(() => {});
+              }
+
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: 'done', action, model: evt.model })}\n\n`
+                )
+              );
+            } else {
+              controller.enqueue(encoder.encode(part + '\n\n'));
+            }
+          } catch {
+            controller.enqueue(encoder.encode(part + '\n\n'));
+          }
+        }
+      },
+      flush(controller) {
+        if (buffer.trim()) controller.enqueue(encoder.encode(buffer));
+      },
     });
+
+    return new Response(rawStream.pipeThrough(transform), { headers: SSE_HEADERS });
   } catch (err) {
     console.error('[ai/chat]', err);
-    return NextResponse.json(
-      { message: 'Something went wrong. Please try again.', action: null },
-      { status: 500 }
-    );
+    return sseError('Something went wrong. Please try again.');
   }
 }

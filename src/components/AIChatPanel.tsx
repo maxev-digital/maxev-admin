@@ -644,39 +644,6 @@ export default function AIChatPanel() {
         result = 'Note added.';
       }
 
-      else if (operation === 'send_proposal') {
-        const res = await fetch('/api/proposals/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            leadId:       payload.leadId,
-            packageTier:  payload.packageTier ?? 'PRO',
-            lineItems:    payload.lineItems ?? [],
-            oneTimeTotal: payload.oneTimeTotal ?? 0,
-            monthlyTotal: payload.monthlyTotal ?? 0,
-            message:      payload.message ?? '',
-          }),
-        });
-        if (!res.ok) throw new Error('Proposal send failed');
-        const sent = await res.json();
-        result = `Proposal ${String(sent.proposalNumber)} created for ${String(payload.leadName)}.\nSign URL: ${String(sent.signUrl)}`;
-      }
-
-      else if (operation === 'convert_client') {
-        const res = await fetch(`/api/pipeline/${String(payload.leadId)}/convert`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            packageTier: payload.packageTier ?? 'PRO',
-            setupFee:    payload.setupFee ?? '0',
-            monthly:     payload.monthly ?? '0',
-          }),
-        });
-        if (!res.ok) throw new Error('Conversion failed');
-        const conv = await res.json();
-        result = `${String(payload.leadName)} is now an active client.\nClient profile, invoice, billing & appointment created.\nInstall: ${String(conv.appointmentDate ?? 'scheduled')} at 9:00 AM`;
-      }
-
       setMessages(prev => prev.map(m =>
         m.id === msgId ? { ...m, actionStatus: 'done', actionResult: result } : m
       ));
@@ -783,6 +750,8 @@ export default function AIChatPanel() {
     setInput('');
     setLoading(true);
 
+    const aiMsgId = crypto.randomUUID();
+
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
@@ -794,37 +763,77 @@ export default function AIChatPanel() {
         }),
       });
 
-      const data = await res.json();
-      const action = data.action as ChatAction | null;
+      if (!res.ok || !res.body) throw new Error('Stream unavailable');
 
-      const aiMsg: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: data.message,
-        action: action ?? undefined,
-        actionStatus: (action?.type === 'draft' || action?.type === 'confirm') ? 'pending' : undefined,
-        model: data.model,
-      };
-      setMessages(prev => [...prev, aiMsg]);
+      setMessages(prev => [...prev, { id: aiMsgId, role: 'assistant', content: '' }]);
 
-      if (action?.type === 'navigate' || action?.type === 'filter') {
-        executeNavigation(action as NavigateAction | FilterAction);
-      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+      let fullText = '';
 
-      if (action?.type === 'draft') {
-        const draft = action as DraftAction;
-        openDraft({
-          docType:   draft.docType,
-          draftData: { ...draft.data },
-          onApprove: (editedData) => approveDraft(aiMsg.id, draft, editedData),
-        });
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const parts = sseBuffer.split('\n\n');
+        sseBuffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(part.slice(6)) as {
+              type: string;
+              text?: string;
+              action?: ChatAction | null;
+              model?: string;
+              message?: string;
+            };
+
+            if (evt.type === 'token' && evt.text) {
+              fullText += evt.text;
+              setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content: fullText } : m));
+            } else if (evt.type === 'done') {
+              const action = (evt.action as ChatAction) ?? null;
+              setMessages(prev => prev.map(m =>
+                m.id === aiMsgId ? {
+                  ...m,
+                  content: fullText || '...',
+                  action: action ?? undefined,
+                  actionStatus: (action?.type === 'draft' || action?.type === 'confirm') ? 'pending' : undefined,
+                  model: evt.model,
+                } : m
+              ));
+
+              if (action?.type === 'navigate' || action?.type === 'filter') {
+                executeNavigation(action as NavigateAction | FilterAction);
+              }
+
+              if (action?.type === 'draft') {
+                const draft = action as DraftAction;
+                openDraft({
+                  docType:   draft.docType,
+                  draftData: { ...draft.data },
+                  onApprove: (editedData) => approveDraft(aiMsgId, draft, editedData),
+                });
+              }
+            } else if (evt.type === 'error') {
+              setMessages(prev => prev.map(m =>
+                m.id === aiMsgId ? { ...m, content: evt.message || 'An error occurred.' } : m
+              ));
+            }
+          } catch { /* ignore malformed SSE chunk */ }
+        }
       }
     } catch {
-      setMessages(prev => [...prev, {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: 'Connection error. Please try again.',
-      }]);
+      setMessages(prev => {
+        const hasPlaceholder = prev.some(m => m.id === aiMsgId);
+        const errMsg: ChatMessage = { id: aiMsgId, role: 'assistant', content: 'Connection error. Please try again.' };
+        return hasPlaceholder
+          ? prev.map(m => m.id === aiMsgId ? errMsg : m)
+          : [...prev, errMsg];
+      });
     } finally {
       setLoading(false);
     }
